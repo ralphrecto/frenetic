@@ -77,6 +77,19 @@ let handle_request
          Cohttp_async.Server.respond `OK)
     | _, _ -> printf "Got garbage from Client"; Cohttp_async.Server.respond `Not_found
 
+
+(* Run embedded HTTP server *)
+let routes = [
+  ("/topology", fun _ ->
+    (* TODO: get the actual topology instead of empty *)
+      Gui_Server.string_handler "{}");
+  ("/switch/([1-9][0-9]*)", fun g ->
+      let sw_id = Int64.of_string (Array.get g 1) in
+      printf "Requested policy for switch %Lu" sw_id;
+      let pol = NetKAT_Types.drop in
+      Gui_Server.string_handler (NetKAT_Pretty.string_of_policy pol))
+]
+
 let listen ~port =
   Async_OpenFlow.OpenFlow0x01.Controller.create ~port:6633 ()
   >>= fun controller ->
@@ -85,6 +98,7 @@ let listen ~port =
     end) in
   let _ = Cohttp_async.Server.create (Tcp.on_port port)
     (handle_request Controller.event Controller.send_packet_out Controller.query) in
+  let _ = Gui_Server.create (routes @ Gui_Server.routes) in
   let (_, pol_reader) = DynGraph.to_pipe pol in
   let _ = Pipe.iter pol_reader ~f:(fun pol -> Controller.update_policy pol) in
   Controller.start ();
@@ -95,3 +109,5 @@ let main (args : string list) : unit = match args with
     don't_wait_for (listen ~port:(Int.of_string p))
   | [] -> don't_wait_for (listen ~port:9000)
   |  _ -> (print_endline "Invalid command-line arguments"; Shutdown.shutdown 1)
+
+
