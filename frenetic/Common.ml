@@ -2,6 +2,13 @@ open Core.Std
 open Async.Std
 open Cohttp_async
 
+let profile f =
+  let t1 = Unix.gettimeofday () in
+  let r = f () in
+  let t2 = Unix.gettimeofday () in
+  (t2 -. t1, r)
+
+
 let printf ?(level : [ `Debug | `Info | `Error ] = `Info)
   (fmt :  ('a, unit, string, unit) format4) =
   Async_OpenFlow.Log.printf ~level ~tags:[("frenetic", "http")] fmt
@@ -25,6 +32,20 @@ let handle_parse_errors
   | Ok x -> handler x
   | Error exn ->
       printf ~level:`Error "Invalid message from client";
+      Cohttp_async.Server.respond `Bad_request
+
+let handle_parse_errors'
+  (body : Cohttp_async.Body.t)
+  (body_parser : string -> 'a)
+  (handler : 'a -> Cohttp_async.Server.response Deferred.t) :
+  Cohttp_async.Server.response Deferred.t =
+  Body.to_string body
+  >>= fun body_str ->
+  try_with (fun () -> return (body_parser body_str))
+  >>= function
+  | Ok x -> handler x
+  | Error exn ->
+      printf ~level:`Error "Invalid message from client:\n%s" body_str;
       Cohttp_async.Server.respond `Bad_request
 
 let parse_update body = Body.to_string body >>= fun pol_str ->
