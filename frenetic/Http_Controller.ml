@@ -125,24 +125,28 @@ let handle_request
 let print_error addr exn =
   Log.error "%s" (Exn.to_string exn)
 
-(* Run embedded HTTP server *)
-let routes = [
-  ("/topology", fun _ ->
-    (* TODO: get the actual topology instead of empty *)
-      Gui_Server.string_handler "{}");
-  ("/switch/([1-9][0-9]*)", fun g ->
-      let sw_id = Int64.of_string (Array.get g 1) in
-      printf "Requested policy for switch %Lu" sw_id;
-      let pol = NetKAT_Types.drop in
-      Gui_Server.string_handler (NetKAT_Pretty.string_of_policy pol))
-]
-
 let listen ~http_port ~openflow_port =
   Async_OpenFlow.OpenFlow0x01.Controller.create ~port:openflow_port ()
   >>= fun controller ->
   let module Controller = NetKAT_Controller.Make (struct
       let controller = controller
     end) in
+  let routes = [
+    ("/topology", fun _ ->
+      (* TODO: get the actual topology instead of empty *)
+        let switches = Controller.current_switches () in
+        let module Net = Async_NetKAT.Net in      
+        let topo = List.fold_left switches
+          ~f:(fun topo' (switch, _) -> fst (Net.Topology.add_vertex topo' (Switch switch)))
+          ~init:(Net.Topology.empty ()) in
+        let topo_json = Gui_Server.topo_to_json topo in
+        Gui_Server.string_handler topo_json);
+    ("/switch/([1-9][0-9]*)", fun g ->
+        let sw_id = Int64.of_string (Array.get g 1) in
+        printf "Requested policy for switch %Lu" sw_id;
+        let pol = NetKAT_Types.drop in
+        Gui_Server.string_handler (NetKAT_Pretty.string_of_policy pol))
+  ] in
   let _ = Gui_Server.create (routes @ Gui_Server.routes) in
   let on_handler_error = `Call print_error in
   let _ = Cohttp_async.Server.create
