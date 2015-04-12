@@ -133,7 +133,8 @@ let listen ~http_port ~openflow_port =
     end) in
   let routes = [
     ("/topology", fun _ ->
-      (* TODO: get the actual topology instead of empty *)
+      (* TODO: add edges to topo
+       * define topology in module *)
         let switches = Controller.current_switches () in
         let module Net = Async_NetKAT.Net in      
         let topo = List.fold_left switches
@@ -147,7 +148,7 @@ let listen ~http_port ~openflow_port =
         let pol = NetKAT_Types.drop in
         Gui_Server.string_handler (NetKAT_Pretty.string_of_policy pol))
   ] in
-  let _ = Gui_Server.create (routes @ Gui_Server.routes) in
+  let _ = Gui_Server.create routes in
   let on_handler_error = `Call print_error in
   let _ = Cohttp_async.Server.create
     ~on_handler_error

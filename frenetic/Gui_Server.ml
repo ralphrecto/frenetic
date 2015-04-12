@@ -1,17 +1,25 @@
 open Core.Std
 open Async.Std
 
-let static_handler ?content_type filename = fun _ _ _ ->
+type handler = body:Cohttp_async.Body.t -> Unix.Socket.Address.Inet.t -> 
+  Cohttp_async.Request.t -> Cohttp_async.Server.response Deferred.t
+
+type routes = (bytes * (bytes array -> handler)) list
+
+let static_handler ?content_type (filename: bytes) = fun ~body _ _ ->
   let headers = match content_type with
     | None -> None
     | Some(typ) ->
       Some(Cohttp.Header.init_with "Content-type" typ) in
   Cohttp_async.Server.respond_with_file ?headers filename
 
-let string_handler str = fun _ _ _ ->
+let bytes_handler (b: bytes) : handler = fun ~body _ _ ->
+  Cohttp_async.Server.respond_with_string "hi"
+
+let string_handler str : handler = fun ~body _ _ ->
   Cohttp_async.Server.respond_with_string str
 
-let not_found_handler = fun _ _ _ ->
+let not_found_handler : handler = fun ~body _ _ ->
   Cohttp_async.Server.respond_with_string ~code:(`Code 404) "Not found"
 
 let topo_to_json (t: Async_NetKAT.Net.Topology.t) =
@@ -57,14 +65,14 @@ let routes_to_handler rs =
           with Not_found -> loop uri t'
         end
       | [] ->
-        fun _ _ _ ->
+        fun ~body _ _ ->
           Cohttp_async.Server.respond_with_string ~code:(`Code 404)
             "Not found" in
-  fun ~body addr request ->
+  fun ~body addr (request: Cohttp.Request.t) ->
     (loop (Uri.path (Cohttp.Request.uri request)) table) body addr request
 
 let create ?max_connections ?max_pending_connections
-    ?buffer_age_limit ?on_handler_error routes =
+    ?buffer_age_limit ?on_handler_error ext_routes =
   Cohttp_async.Server.create ?max_connections ?max_pending_connections
     ?buffer_age_limit ?on_handler_error
-    (Tcp.on_port 8080) (routes_to_handler routes)
+    (Tcp.on_port 8080) (routes_to_handler (routes @ ext_routes))
