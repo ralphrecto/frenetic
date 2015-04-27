@@ -131,17 +131,15 @@ let listen ~http_port ~openflow_port =
   let module Controller = NetKAT_Controller.Make (struct
       let controller = controller
     end) in
+  let discoverclient = get_client "discover" in
+  let discover =
+    let event_pipe = Pipe.map discoverclient.event_reader
+      ~f:(fun s -> s |> Yojson.Basic.from_string |>
+        NetKAT_Json.event_from_json) in
+    Discoveryapp.Discovery.start event_pipe (module Controller) in
   let routes = [
     ("/topology", fun _ ->
-      (* TODO: add edges to topo
-       * define topology in module *)
-        let switches = Controller.current_switches () in
-        let module Net = Async_NetKAT.Net in      
-        let topo = List.fold_left switches
-          ~f:(fun topo' (switch, _) -> fst (Net.Topology.add_vertex topo' (Switch switch)))
-          ~init:(Net.Topology.empty ()) in
-        let topo_json = Gui_Server.topo_to_json topo in
-        Gui_Server.string_handler topo_json);
+      Gui_Server.string_handler (Gui_Server.topo_to_json !(discover.nib)));
     ("/switch/([1-9][0-9]*)", fun g ->
         let sw_id = Int64.of_string (Array.get g 1) in
         printf "Requested policy for switch %Lu" sw_id;
