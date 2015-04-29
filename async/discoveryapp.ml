@@ -118,10 +118,44 @@ module Switch = struct
 end
 
 module Host = struct
+  (*TODO: update policy when packet's destination is in known_hosts*)
+  let update (nib: Net.Topology.t) (pol:policy) (evt:event) : Net.Topology.t  * policy
+  	= match evt with
+ 	| PacketIn( _ ,sw_id,pt_id,payload,len) -> 
+ 		let open Packet in 
+ 		let dlAddr, nwAddr = match parse(SDN_Types.payload_bytes payload) with
+ 		| {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) } 
+ 		| {nw = Arp (Arp.reply(dlSrc,nwSrc,_,_)) } ->
+ 			(dlSrc,nwSrc) 
+ 		| _ -> assert false in
+   	  let host = try Some (vertex_of_label nib (Host(dlAddr, nwAddr))) 
+   	  	with _ -> None in 
+   	  begin match TUtil.in_edge nib sw_id pt_id, h with
+   	  	| true, None ->
+   	  	  let nib', h = add_vertex nib (Host(dlAddr,nwAddr)) in
+   	  	  let nib', s = add_vertex nib' (Switch sw_id) in  (*is this line necessary?*)
+   	  	  let nib', _ = add_edge nib' s pt_id () h 01 in
+   	  	  let nib', _ = add_edge nib' h 01 () s pt_id in 
+   	  	  let pol' = 
+   	  	  (nib', pol)
+   	  	| _ , _ -> (nib,pol)
+   	  end
 
-  let update (nib: Net.Topology.t) (evt: event) : Net.Topology.t = nib
+   	 | PortDown (sw_id,pt_id) -> 
+   	 	let v = vertex_of_label nib (Switch sw_id) in 
+   	 	let mh = next_hop nib v pt_id in 
+   	 	begin match mh with 
+   	 	| None -> (nib,pol)
+   	 	| Some (edge) -> 
+   	 		let (v2,pt_id2) = edge_dst edge in 
+   	 		begin match vertex_of_label nib v2 with 
+   	 			| Switch _ -> (nib,pol)
+   	 			| Host (dlAddr, nwAddr) ->
+   	 				(remove_endpint nib (v,pt_id), pol)
+   	 	end
 
-  let create () : policy = id 
+  let create (): policy =  guard (Test((EthType 0x0806)),
+  								Mod(Location(Pipe "host")))
 
 end
 
