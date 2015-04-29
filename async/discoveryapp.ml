@@ -152,6 +152,7 @@ module Host = struct
    	 			| Switch _ -> (nib,pol)
    	 			| Host (dlAddr, nwAddr) ->
    	 				(remove_endpint nib (v,pt_id), pol)
+   	 		end
    	 	end
 
   let create (): policy =  guard (Test((EthType 0x0806)),
