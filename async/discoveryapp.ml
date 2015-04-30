@@ -179,8 +179,8 @@ module Discovery = struct
       | `Eof -> return ()
       | `Ok evt -> 
           let (nib',pol') = Host.update (Switch.update !(t.nib) evt) t.pol evt in
-	  nib:= nib';
-	  pol:= pol';
+	  t.nib:= nib';
+	  t.pol:= pol';
           loop event_pipe
 
   let start (event_pipe: event Pipe.Reader.t)
