@@ -1,4 +1,5 @@
-open Core.Std
+
+pen Core.Std
 open Async.Std
 open NetKAT_Types
 
@@ -118,23 +119,22 @@ module Switch = struct
 end
 
 module Host = struct
-
-  let update (nib: Net.Topology.t) (pol:policy) (evt:event) : Net.Topology.t  * policy = match evt with
-	 printf("in host update");
-	 | PacketIn( _ ,sw_id,pt_id,payload,len) -> 
- 	 	let open Packet in 
+  (*TODO: update policy when packet's destination is in known_hosts*)
+  let update (nib: Net.Topology.t) (pol:policy) (evt:event) : Net.Topology.t  * policy
+  	= match evt with
+ 	| PacketIn( _ ,sw_id,pt_id,payload,len) -> 
+ 		let open Packet in 
  		let dlAddr, nwAddr = match parse(SDN_Types.payload_bytes payload) with
-  		| {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) } 
+ 		| {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) } 
  		| {nw = Arp (Arp.reply(dlSrc,nwSrc,_,_)) } ->
  			(dlSrc,nwSrc) 
  		| _ -> assert false in
-		printf("host packetin!");
-   	  	let host = try Some (vertex_of_label nib (Host(dlAddr, nwAddr))) 
+   	  let host = try Some (vertex_of_label nib (Host(dlAddr, nwAddr))) 
    	  	with _ -> None in 
    	  begin match TUtil.in_edge nib sw_id pt_id, h with
    	  	| true, None ->
    	  	  let nib', h = add_vertex nib (Host(dlAddr,nwAddr)) in
-   	  	  let nib', s = add_vertex nib' (Switch sw_id) in (*necessary?*)
+   	  	  let nib', s = add_vertex nib' (Switch sw_id) in  (*is this line necessary?*)
    	  	  let nib', _ = add_edge nib' s pt_id () h 01 in
    	  	  let nib', _ = add_edge nib' h 01 () s pt_id in 
    	  	  let pol' = 
@@ -153,12 +153,11 @@ module Host = struct
    	 			| Switch _ -> (nib,pol)
    	 			| Host (dlAddr, nwAddr) ->
    	 				(remove_endpint nib (v,pt_id), pol)
+   	 		end
    	 	end
-	| _ -> (nib,pol)
 
- (* change this to return an initial policy by which switches will send host packets with location "host" *)
-  let create (): policy =  guard (Test((EthType 0x0806)), Mod(Location(Pipe "host")))
- 
+  let create (): policy = 
+    guard (Test((EthType 0x0806)), Mod(Location(Pipe "host")))
 
 end
 
@@ -179,7 +178,9 @@ module Discovery = struct
     Pipe.read event_pipe >>= function
       | `Eof -> return ()
       | `Ok evt -> 
-          t.nib := Host.update (Switch.update !(t.nib) evt) t.policy evt;
+          let (nib',pol') = Host.update (Switch.update !(t.nib) evt) t.pol evt in
+	  nib:= nib';
+	  pol:= pol';
           loop event_pipe
 
   let start (event_pipe: event Pipe.Reader.t)
