@@ -1,4 +1,5 @@
-open Core.Std
+
+pen Core.Std
 open Async.Std
 open NetKAT_Types
 
@@ -131,10 +132,50 @@ module Switch = struct
 end
 
 module Host = struct
+  
+  let hosts = ref []; 
 
-  let update (nib: Net.Topology.t) (evt: event) : Net.Topology.t = nib
+  let update (nib: Net.Topology.t) (evt:event) : Net.Topology.t  
+  	= match evt with
+ 	| PacketIn( "host" ,sw_id,pt_id,payload,len) -> 
+ 		let open Packet in 
+ 		let dlAddr,nwAddr = match parse(SDN_Types.payload_bytes payload) with
+ 		| {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) } ->
+ 		| {nw = Arp (Arp.Reply(dlSrc,nwSrc,_,_)) } ->
+ 			(dlSrc,nwSrc) 
+ 		| _ -> assert false in
+   	  let h = try Some (vertex_of_label nib (Host (dlAddr,nwAddr))) 
+   	  	with _ -> None in 
+   	  begin match TUtil.in_edge nib sw_id pt_id, h with
+   	  	| true, None ->
+   	  	  let nib', h = add_vertex nib (Host (dlAddr,nwAddr)) in
+   	  	  let nib', s = add_vertex nib' (Switch sw_id) in  (*is this line necessary?*)
+   	  	  let nib', _ = add_edge nib' s pt_id () h 01 in
+   	  	  let nib', _ = add_edge nib' h 01 () s pt_id in
+   	  	  hosts := Host(dlAddr,nwAddr)::(!hosts);
+   	  	  nib'
+   	  	| _ , _ -> nib
+   	  end
 
-  let create () : policy = id 
+  | PortDown (sw_id,pt_id) -> 
+   	let v = vertex_of_label nib (Switch sw_id) in 
+   	let mh = next_hop nib v pt_id in 
+   	begin match mh with 
+   	| None -> nib
+   	| Some (edge) -> 
+   	 	let (v2,pt_id2) = edge_dst edge in 
+   	 	begin match vertex_of_label nib v2 with 
+   	 		| Switch _ -> nib
+   	 		| Host (dlAddr, nwAddr) ->
+   	 			hosts := List.filter (fun x -> x!= Host(dlAddr,nwAddr)) !hosts;
+   	 			remove_endpint nib (v,pt_id)
+      end
+   	end
+
+  let gen_policy (): policy =  
+    let def = Test(EthType 0x0806) in
+    let tests = List.fold_left (fun acc (mac,ip) -> mk_and acc Neg(Test(EthSrc mac))) def !hosts in 
+    guard (tests, Mod(Location(Pipe "host")))
 
 end
 
@@ -154,7 +195,7 @@ module Discovery = struct
     Pipe.read event_pipe >>= function
       | `Eof -> return ()
       | `Ok evt -> 
-          t.nib := Host.update (Switch.update !(t.nib) evt) evt;
+          t.nib := Host.update (Switch.update !(t.nib) evt) evt in
           loop event_pipe
 
   let start (event_pipe: event Pipe.Reader.t)
