@@ -15,7 +15,6 @@ type client = {
   event_writer: string Pipe.Writer.t;
 }
 
-
 (* TODO(arjun):
 
   <facepalm>
@@ -131,11 +130,18 @@ let listen ~http_port ~openflow_port =
   let module Controller = NetKAT_Controller.Make (struct
       let controller = controller
     end) in
+  let on_handler_error = `Call print_error in
+  let _ = Cohttp_async.Server.create
+    ~on_handler_error
+    (Tcp.on_port http_port)
+    (handle_request (module Controller)) in
+  let (_, pol_reader) = DynGraph.to_pipe pol in
+  let _ = Pipe.iter pol_reader ~f:(fun pol -> Controller.update_policy pol) in
+  Controller.start ();
   let discoverclient = get_client "discover" in
   let discover =
     let event_pipe = Pipe.map discoverclient.event_reader
-      ~f:(fun s -> s |> Yojson.Basic.from_string |>
-        NetKAT_Json.event_from_json) in
+      ~f:(fun s -> s |> Yojson.Basic.from_string |> NetKAT_Json.event_from_json) in
     Discoveryapp.Discovery.start event_pipe (module Controller) in
   let routes = [
     ("/topology", fun _ ->
@@ -147,16 +153,8 @@ let listen ~http_port ~openflow_port =
         Gui_Server.string_handler (NetKAT_Pretty.string_of_policy pol))
   ] in
   let _ = Gui_Server.create routes in
-  let on_handler_error = `Call print_error in
-  let _ = Cohttp_async.Server.create
-    ~on_handler_error
-    (Tcp.on_port http_port)
-    (handle_request (module Controller)) in
-  let (_, pol_reader) = DynGraph.to_pipe pol in
-  let _ = Pipe.iter pol_reader ~f:(fun pol -> Controller.update_policy pol) in
-  Controller.start ();
   don't_wait_for(propogate_events Controller.event);
   Deferred.return ()
 
-let main (http_port : int) (openflow_port : int) () : unit =
+let start (http_port : int) (openflow_port : int) () : unit =
   don't_wait_for(listen ~http_port ~openflow_port)

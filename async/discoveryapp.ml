@@ -6,6 +6,7 @@ let guard (pred: pred) (policy: policy) =
   Seq(Filter pred, policy)
 
 module Net = Async_NetKAT.Net
+module Log = Async_OpenFlow.Log
 
 module Switch = struct
   module Probe = struct
@@ -63,15 +64,21 @@ module Switch = struct
       ; dlVlanPcp = 0x0
       ; nw = Unparsable(protocol, marshal' t)
       }
+
+    let to_pkt_out t : SDN_Types.pktOut =  
+      (NotBuffered(marshal' t), None, [Modify(SetEthSrc(mac)); Output(Physical(t.port_id))])
+
   end
 
-  let probes = ref []
+  let probes : Probe.t list ref = ref []
 
   let probe_period = Time.Span.of_sec 3.0
 
+  (*
   let send_probes () =
     let uri = Uri.of_string "http://localhost:8080/pkt_out" in
     Cohttp_async.Client.post 
+    *)
 
   let handle_probe nib dst_swid dst_port (probe : Probe.t) : Net.Topology.t =
     let open Net.Topology in
@@ -84,8 +91,10 @@ module Switch = struct
 
   let update (nib: Net.Topology.t) (evt: event) : Net.Topology.t =
     let open Net.Topology in
+    Log.info "event received";
     match evt with
       | PacketIn ("probe", switch, port, payload, len) ->
+          Log.info "hi";
           let open Packet in
           begin match parse (SDN_Types.payload_bytes payload) with
           | { nw = Unparsable (dlTyp, bytes) } when dlTyp = Probe.protocol ->
@@ -93,14 +102,16 @@ module Switch = struct
               handle_probe nib switch port probe
           | _ -> nib (* error: bad packet *)
           end
-      | SwitchUp (switch, ports) ->
-          let nib', node = add_vertex nib (Switch switch) in
-          List.fold ports ~init:nib'
-            ~f:(fun nib'' port -> add_port nib'' node port)
+      | PacketIn (_, switch, port, payload, len) -> Log.info "hello"; nib
+      | SwitchUp (switch_id, ports) ->
+          List.iter ports (fun port_id ->
+            probes := ({switch_id; port_id}) :: !probes);
+          let nib', node = add_vertex nib (Switch switch_id) in
+          List.fold ports ~init:nib' ~f:(fun nib'' port -> add_port nib'' node port)
       | SwitchDown switch ->
           remove_vertex nib (vertex_of_label nib (Switch switch))
-      | PortUp (switch_id, port_id) ->
-          probes := ({switch_id; port_id} :: !probes);
+      | PortUp (switch, port) ->
+          probes := ({switch_id = switch; port_id = port} :: !probes);
           add_port nib (vertex_of_label nib (Switch switch)) port
       | PortDown (switch, port) ->
           remove_port nib (vertex_of_label nib (Switch switch)) port
@@ -109,11 +120,13 @@ module Switch = struct
   let rec probeloop (sender : switchId -> SDN_Types.pktOut -> unit Deferred.t) =
     Clock.after probe_period >>=
       fun () ->
-        Deferred.List.iter ~how:`Parallel !probes (fun probe ->
-          sender switch_id (Probe.to_packet probe)) >>= 
+        Deferred.List.iter ~how:`Parallel (!probes)
+          ~f:(fun p -> Log.info "sending probe"; sender p.switch_id (Probe.to_pkt_out p)) >>=
+        fun () -> probeloop sender
 
   let create () : policy =
-    guard (Test(EthSrc Probe.mac)) (Mod(Location(Pipe "probe")))
+    (* guard (Test(EthSrc Probe.mac)) (Mod(Location(Pipe "probe"))) *)
+    (Mod(Location(Pipe "probe")))
 
 end
 
@@ -138,7 +151,6 @@ module Discovery = struct
   }    
 
   let rec loop (event_pipe: event Pipe.Reader.t) : unit Deferred.t =
-
     Pipe.read event_pipe >>= function
       | `Eof -> return ()
       | `Ok evt -> 
@@ -149,9 +161,9 @@ module Discovery = struct
       (module Controller : NetKAT_Controller.CONTROLLER) = 
 
     let policy = Union (Switch.create (), Host.create ()) in
-    don't_wait_for (Deferred.both
+    don't_wait_for begin (Deferred.both
       (loop event_pipe)
-      (probeloop Controller.send_packet_out));
+      (Switch.probeloop Controller.send_packet_out)) >>| fun _ -> () end;
     {t with policy}
 
 end

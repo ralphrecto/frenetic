@@ -52,7 +52,7 @@ let compile_server : unit Term.t * Term.info =
 let http_controller : unit Term.t * Term.info =
   let open Term in
   let doc = "Run the HTTP controller" in
-  (async_init (pure Http_Controller.main $ http_port $ openflow_port),
+  (async_init (pure Http_Controller.start $ http_port $ openflow_port),
    info "http-controller" ~doc)
 
 (* Add new commands here. *)

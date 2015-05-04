@@ -33,12 +33,19 @@ let topo_to_json (t: Async_NetKAT.Net.Topology.t) =
         `Assoc [("type", `String "host");
                 ("mac", `String (Packet.string_of_mac dladdr));
                 ("ip", `String (Packet.string_of_ip nwaddr))] in
-  let edge_to_json (l: Topo.edge) = `String "()" in
+  let edge_to_json (e: Topo.edge) = 
+    let src, src_port = Topo.edge_src e in
+    let dst, dst_port = Topo.edge_dst e in
+    (* TODO: ids for vertices *)
+    `Assoc [("src_id", `Int 5);
+            ("src_port", `Int (Int32.to_int_exn src_port));
+            ("label", `String "");
+            ("dst_id", `Int 5);
+            ("dst_port", `Int (Int32.to_int_exn dst_port))] in
   let vertices = `List (Topo.VertexSet.fold (Topo.vertexes t)
       ~f: (fun acc v -> (vertex_to_json (Topo.vertex_to_label t v))::acc)
       ~init: []) in
-  (* TODO: edge json *)
-  let edges = `List [] in
+  let edges = `List (Topo.fold_edges (fun e acc -> (edge_to_json e)::acc) t []) in
   Yojson.Safe.to_string (`Assoc [("nodes", vertices); ("links", edges);])
 
 let routes = [
