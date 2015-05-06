@@ -135,23 +135,29 @@ module SwitchMap = Map.Make(Int64)
 module PortMap = Map.Make(Int32)
 module Host = struct
 
- (* let state = ref (SwitchMap.empty) *)
+  let state = ref (SwitchMap.empty) 
  
   let create () : policy = 
     let open Async_NetKAT in
     let open NetKAT_Types in 
     let open Optimize in
-    (**let default = (Test(EthType 0x0806)) in
+    let default = Test(EthType 0x0806) in 
     let func ~key:sw_id ~data:port_map acc = PortMap.fold port_map ~init:acc ~f:(fun ~key:port ~data:(mac,ip) acc' -> mk_and acc' (Neg(Test(EthSrc mac)))) in 
     let tests = SwitchMap.fold !state ~init:default ~f:func in
-    guard default*) (Mod(Location(Pipe "host")))
+    Seq(Filter tests, (Mod(Location(Pipe "host")))) 
 
   let update (nib: Net.Topology.t) (evt:event) : Net.Topology.t  = 
     let open Net.Topology in
     let open NetKAT_Types in
     let open Async_NetKAT in 
     match evt with
- 	  | PacketIn( "host" ,sw_id,pt_id,payload,len) ->( 
+     | SwitchUp(switch_id,port_id) ->
+       state:= SwitchMap.add !state switch_id PortMap.empty;
+       nib
+     | SwitchDown(switch_id)	 -> 
+       state:= SwitchMap.remove !state switch_id;
+       nib
+     | PacketIn( "host" ,sw_id,pt_id,payload,len) ->( 
  		 let open Packet in 
  		 let dlAddr,nwAddr = match parse(SDN_Types.payload_bytes payload) with
  		 | {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) }
@@ -166,21 +172,27 @@ module Host = struct
    	  	   let nib', s = add_vertex nib' (Switch sw_id) in  (*is this line necessary?*)
    	  	   let nib', _ = add_edge nib' s pt_id () h Int32.one in
    	  	   let nib', _ = add_edge nib' h Int32.one () s pt_id in 
-                   nib'
+		   let portmap = SwitchMap.find !state sw_id in 
+		   let portmap = (match portmap with 
+		    | Some (map) -> PortMap.add map pt_id (dlAddr,nwAddr)
+		    | None -> PortMap.empty) in
+                   state := SwitchMap.add !state sw_id portmap;
+		   nib'
    	  	 | _ , _ -> nib
    	    end)
 
     | PortDown (sw_id,pt_id) -> (
-      (*let host = find_host sw_id pt_id in 
-      match host with 
+      let v = vertex_of_label nib (Switch sw_id) in
+      let portmap = SwitchMap.find !state sw_id in
+      match portmap with
       | None -> nib
-      | Some h -> 
-          let v = vertex_of_label nib (Switch sw_id) in
-          let nib = remove_endpoint nib (v, pt_id) in
-          hosts:= List.filter (fun x -> x!=h) !hosts;
-          remove_host sw_id pt_id; *)
-          nib )
-    | _ -> nib    	
+      | Some (map) -> 
+	  begin
+ 	    let portmap = PortMap.remove map pt_id in 
+	    state := SwitchMap.add !state sw_id portmap;
+	    remove_endpoint nib (v,pt_id)
+	  end)
+    | _ -> nib
 
 end
 
