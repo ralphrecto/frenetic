@@ -1,5 +1,5 @@
 
-pen Core.Std
+open Core.Std
 open Async.Std
 open NetKAT_Types
 
@@ -131,53 +131,60 @@ module Switch = struct
 
 end
 
+module SwitchMap = Map.Make(Int64)
+module PortMap = Map.Make(Int32)
 module Host = struct
-  
-  let hosts = ref []; 
 
-  let update (nib: Net.Topology.t) (evt:event) : Net.Topology.t  
-  	= match evt with
- 	| PacketIn( "host" ,sw_id,pt_id,payload,len) -> 
- 		let open Packet in 
- 		let dlAddr,nwAddr = match parse(SDN_Types.payload_bytes payload) with
- 		| {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) } ->
- 		| {nw = Arp (Arp.Reply(dlSrc,nwSrc,_,_)) } ->
- 			(dlSrc,nwSrc) 
- 		| _ -> assert false in
-   	  let h = try Some (vertex_of_label nib (Host (dlAddr,nwAddr))) 
-   	  	with _ -> None in 
-   	  begin match TUtil.in_edge nib sw_id pt_id, h with
-   	  	| true, None ->
-   	  	  let nib', h = add_vertex nib (Host (dlAddr,nwAddr)) in
-   	  	  let nib', s = add_vertex nib' (Switch sw_id) in  (*is this line necessary?*)
-   	  	  let nib', _ = add_edge nib' s pt_id () h 01 in
-   	  	  let nib', _ = add_edge nib' h 01 () s pt_id in
-   	  	  hosts := Host(dlAddr,nwAddr)::(!hosts);
-   	  	  nib'
-   	  	| _ , _ -> nib
-   	  end
+ (* let state = ref (SwitchMap.empty) *)
+ 
+  let create () : policy = 
+    let open Async_NetKAT in
+    let open NetKAT_Types in 
+    let open Optimize in
+    (**let default = (Test(EthType 0x0806)) in
+    let func ~key:sw_id ~data:port_map acc = PortMap.fold port_map ~init:acc ~f:(fun ~key:port ~data:(mac,ip) acc' -> mk_and acc' (Neg(Test(EthSrc mac)))) in 
+    let tests = SwitchMap.fold !state ~init:default ~f:func in
+    guard default*) (Mod(Location(Pipe "host")))
 
-  | PortDown (sw_id,pt_id) -> 
-   	let v = vertex_of_label nib (Switch sw_id) in 
-   	let mh = next_hop nib v pt_id in 
-   	begin match mh with 
-   	| None -> nib
-   	| Some (edge) -> 
-   	 	let (v2,pt_id2) = edge_dst edge in 
-   	 	begin match vertex_of_label nib v2 with 
-   	 		| Switch _ -> nib
-   	 		| Host (dlAddr, nwAddr) ->
-   	 			hosts := List.filter (fun x -> x!= Host(dlAddr,nwAddr)) !hosts;
-   	 			remove_endpint nib (v,pt_id)
-      end
-   	end
+  let update (nib: Net.Topology.t) (evt:event) : Net.Topology.t  = 
+    let open Net.Topology in
+    let open NetKAT_Types in
+    let open Async_NetKAT in 
+    match evt with
+ 	  | PacketIn( "host" ,sw_id,pt_id,payload,len) ->( 
+ 		 let open Packet in 
+ 		 let dlAddr,nwAddr = match parse(SDN_Types.payload_bytes payload) with
+ 		 | {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) }
+ 		 | {nw = Arp (Arp.Reply(dlSrc,nwSrc,_,_)) } ->
+ 		 	   (dlSrc,nwSrc) 
+ 		 | _ -> assert false in
+   	    let h = try Some (vertex_of_label nib (Host (dlAddr,nwAddr))) 
+   	  	 with _ -> None in 
+   	    begin match TUtil.in_edge nib sw_id pt_id, h with
+   	  	 | true, None ->
+   	  	   let nib', h = add_vertex nib (Host (dlAddr,nwAddr)) in
+   	  	   let nib', s = add_vertex nib' (Switch sw_id) in  (*is this line necessary?*)
+   	  	   let nib', _ = add_edge nib' s pt_id () h Int32.one in
+   	  	   let nib', _ = add_edge nib' h Int32.one () s pt_id in 
+                   nib'
+   	  	 | _ , _ -> nib
+   	    end)
 
-  let gen_policy (): policy =  
-    let def = Test(EthType 0x0806) in
-    let tests = List.fold_left (fun acc (mac,ip) -> mk_and acc Neg(Test(EthSrc mac))) def !hosts in 
-    guard (tests, Mod(Location(Pipe "host")))
+    | PortDown (sw_id,pt_id) -> (
+      (*let host = find_host sw_id pt_id in 
+      match host with 
+      | None -> nib
+      | Some h -> 
+          let v = vertex_of_label nib (Switch sw_id) in
+          let nib = remove_endpoint nib (v, pt_id) in
+          hosts:= List.filter (fun x -> x!=h) !hosts;
+          remove_host sw_id pt_id; *)
+          nib )
+    | _ -> nib    	
 
 end
+
+  
 
 module Discovery = struct
 
@@ -195,7 +202,7 @@ module Discovery = struct
     Pipe.read event_pipe >>= function
       | `Eof -> return ()
       | `Ok evt -> 
-          t.nib := Host.update (Switch.update !(t.nib) evt) evt in
+          t.nib := Host.update (Switch.update !(t.nib) evt) evt; 
           loop event_pipe
 
   let start (event_pipe: event Pipe.Reader.t)
