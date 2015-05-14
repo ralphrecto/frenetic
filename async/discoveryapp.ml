@@ -122,7 +122,8 @@ module Switch = struct
     Clock.after probe_period >>=
       fun () ->
         Deferred.List.iter ~how:`Parallel (!probes)
-          ~f:(fun p -> Log.info "sending probe"; sender p.switch_id (Probe.to_pkt_out p)) >>=
+          ~f:(fun p -> Log.info "sending probe";
+            sender p.switch_id (Probe.to_pkt_out p)) >>=
         fun () -> probeloop sender
 
   let create () : policy =
@@ -196,8 +197,6 @@ module Host = struct
 
 end
 
-  
-
 module Discovery = struct
 
   type t = {
@@ -218,12 +217,11 @@ module Discovery = struct
           loop event_pipe
 
   let start (event_pipe: event Pipe.Reader.t)
-      (module Controller : NetKAT_Controller.CONTROLLER) = 
+    (packet_send : switchId -> SDN_Types.pktOut -> unit Deferred.t) =
 
     let policy = Union (Switch.create (), Host.create ()) in
-    don't_wait_for begin (Deferred.both
-      (loop event_pipe)
-      (Switch.probeloop Controller.send_packet_out)) >>| fun _ -> () end;
+    let _ = Deferred.both (loop event_pipe) (Switch.probeloop packet_send) >>|
+    fun _ -> () in
     {t with policy}
 
 end

@@ -59,53 +59,63 @@ let get_client (clientId: string): client =
                printf ~level:`Info "New client %s" clientId;
                let node = DynGraph.create_source drop in
                DynGraph.attach node pol;
-	       let (r, w) = Pipe.create () in
+         let (r, w) = Pipe.create () in
                { policy_node = node; event_reader = r; event_writer =  w })
 
-let handle_request
-  (module Controller : NetKAT_Controller.CONTROLLER)
+type t = (module NetKAT_Controller.CONTROLLER)
+
+let port_stats (t : t) = 
+  let module Controller = (val t) in Controller.port_stats 
+
+let current_switches (t : t) =
+  let module Controller = (val t) in
+  Controller.current_switches () |> return
+
+let query (t : t) name =
+  let module Controller = (val t) in
+  if (Controller.is_query name) then Some (Controller.query name)
+  else None
+
+let event (t : t) clientId =
+  let module Controller = (val t) in
+  (get_client clientId).event_reader |> Pipe.read >>| function
+    | `Eof -> assert false
+    | `Ok response -> response
+
+let pkt_out (t : t) =
+  let module Controller = (val t) in Controller.send_packet_out
+
+let update _  clientId pol =
+  DynGraph.push pol (get_client clientId).policy_node |> return
+
+let handle_request (t : t)
   ~(body : Cohttp_async.Body.t)
   (client_addr : Socket.Address.Inet.t)
   (request : Request.t) : Server.response Deferred.t =
-  let open Controller in
+  let module Controller = (val t) in
   Log.info "%s %s" (Cohttp.Code.string_of_method request.meth)
     (Uri.path request.uri);
   match request.meth, extract_path request with
     | `GET, ["version"] -> Server.respond_with_string "3"
     | `GET, ["port_stats"; switch_id; port_id] ->
-       port_stats (Int64.of_string switch_id) (Int32.of_string port_id)
-       >>= fun portStats ->
-       Server.respond_with_string (NetKAT_Json.port_stats_to_json_string portStats)
+       ((port_stats t) (Int64.of_string switch_id) (Int32.of_string port_id) >>|
+       NetKAT_Json.port_stats_to_json_string) >>= Server.respond_with_string
     | `GET, ["current_switches"] ->
-      let switches = current_switches () in
-      Server.respond_with_string (current_switches_to_json_string switches)
+      current_switches t >>| current_switches_to_json_string >>= Server.respond_with_string
     | `GET, ["query"; name] ->
-      if (is_query name) then
-        query name
-        >>= fun stats ->
-        Server.respond_with_string (NetKAT_Json.stats_to_json_string stats)
-      else
-        begin
-          Log.info "query %s is not defined in the current policy" name;
-          let headers = Cohttp.Header.init_with "X-Query-Not-Defined" "true" in
-          Server.respond_with_string ~headers
-            (NetKAT_Json.stats_to_json_string (0L, 0L))
-        end
-    | `GET, [clientId; "event"] ->
-      let curr_client = get_client clientId in
-      (* Check if there are events that this client has not seen yet *)
-      Pipe.read curr_client.event_reader
-      >>= (function
-      | `Eof -> assert false
-      | `Ok response -> Server.respond_with_string response)
+      begin query t name |> function
+        | Some x -> x >>| NetKAT_Json.stats_to_json_string >>= Server.respond_with_string
+        | None -> Log.info "query %s is not defined in the current policy" name;
+            let headers = Cohttp.Header.init_with "X-Query-Not-Defined" "true" in
+            Server.respond_with_string ~headers
+            (NetKAT_Json.stats_to_json_string (0L, 0L)) end
+    | `GET, [clientId; "event"] -> event t clientId >>= Server.respond_with_string
     | `POST, ["pkt_out"] ->
       handle_parse_errors' body
         (fun str ->
-           let json = Yojson.Basic.from_string str in
-           NetKAT_SDN_Json.pkt_out_from_json json)
-        (fun (sw_id, pkt_out) ->
-           send_packet_out sw_id pkt_out
-           >>= fun () ->
+           str |> Yojson.Basic.from_string |> NetKAT_SDN_Json.pkt_out_from_json)
+        (fun (sw_id, pkt) ->
+           ((pkt_out t) sw_id pkt) >>= fun _ ->
            Cohttp_async.Server.respond `OK)
     | `POST, [clientId; "update_json"] ->
       handle_parse_errors body parse_update_json
@@ -114,9 +124,7 @@ let handle_request
          Cohttp_async.Server.respond `OK)
     | `POST, [clientId; "update" ] ->
       handle_parse_errors body parse_update
-      (fun pol ->
-         DynGraph.push pol (get_client clientId).policy_node;
-         Cohttp_async.Server.respond `OK)
+      (fun pol -> update t clientId pol >>= fun _ -> Cohttp_async.Server.respond `OK)
     | _, _ ->
       Log.error "Unknown method/path (404 error)";
       Cohttp_async.Server.respond `Not_found
@@ -124,8 +132,8 @@ let handle_request
 let print_error addr exn =
   Log.error "%s" (Exn.to_string exn)
 
-let listen ~http_port ~openflow_port =
-  Async_OpenFlow.OpenFlow0x01.Controller.create ~port:openflow_port ()
+let start (http_port : int) (openflow_port : int) () : unit = 
+  let _ = Async_OpenFlow.OpenFlow0x01.Controller.create ~port:openflow_port ()
   >>= fun controller ->
   let module Controller = NetKAT_Controller.Make (struct
       let controller = controller
@@ -138,11 +146,15 @@ let listen ~http_port ~openflow_port =
   let (_, pol_reader) = DynGraph.to_pipe pol in
   let _ = Pipe.iter pol_reader ~f:(fun pol -> Controller.update_policy pol) in
   Controller.start ();
+  let t : t = (module Controller) in
+
+  (* initialize discovery *)
   let discoverclient = get_client "discover" in
   let discover =
     let event_pipe = Pipe.map discoverclient.event_reader
       ~f:(fun s -> s |> Yojson.Basic.from_string |> NetKAT_Json.event_from_json) in
-    Discoveryapp.Discovery.start event_pipe (module Controller) in
+    Discoveryapp.Discovery.start event_pipe (pkt_out t) in
+  update t "discover" discover.policy >>| fun _ ->
   let routes = [
     ("/topology", fun _ ->
       Gui_Server.string_handler (Gui_Server.topo_to_json !(discover.nib)));
@@ -153,8 +165,5 @@ let listen ~http_port ~openflow_port =
         Gui_Server.string_handler (NetKAT_Pretty.string_of_policy pol))
   ] in
   let _ = Gui_Server.create routes in
-  don't_wait_for(propogate_events Controller.event);
-  Deferred.return ()
-
-let start (http_port : int) (openflow_port : int) () : unit =
-  don't_wait_for(listen ~http_port ~openflow_port)
+  don't_wait_for (propogate_events Controller.event) in
+  ()
