@@ -258,17 +258,21 @@ let event_to_json (event : event) : json =
 
 let event_from_json (json : json) : event =
   let open Yojson.Basic.Util in
+  let payload_from_json (json : json) : payload =
+   let open Yojson.Basic.Util in
+   let bytes = json |> member "buffer" |> to_string |> B64.decode 
+   			 |> Cstruct.of_string in 
+   match json|> member "id" |> to_int_option with 
+    | None -> NotBuffered bytes
+    | Some n -> Buffered (Int32.of_int_exn n, bytes) in 
+
   match json |> member "type" |> to_string with
   | "packet_in" ->
       PacketIn (
         json |> member "pipe" |> to_string,
         json |> member "switch_id" |> to_int |> Int64.of_int_exn,
         json |> member "port_id" |> to_int |> Int32.of_int_exn,
-        begin let payload = json |> member "payload" in
-          let id = payload |> member "id" |> to_int |> Int32.of_int_exn in
-          let buffer = payload |> member "buffer" |> to_string |>
-            B64.decode |> Cstruct.of_string in
-          SDN_Types.Buffered (id, buffer) end,
+        json |> member "payload" |> payload_from_json,
         json |> member "length" |> to_int)
   | "query" ->
       Query (

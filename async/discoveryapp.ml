@@ -1,4 +1,3 @@
-
 open Core.Std
 open Async.Std
 open NetKAT_Types
@@ -67,7 +66,7 @@ module Switch = struct
       }
 
     let to_pkt_out t : SDN_Types.pktOut =  
-      (NotBuffered(marshal' t), None, [Modify(SetEthSrc(mac)); Output(Physical(t.port_id))])
+      (NotBuffered(marshal' t), Some(t.port_id), [Modify(SetEthSrc(mac)); Output(Physical(t.port_id))])
 
   end
 
@@ -127,8 +126,7 @@ module Switch = struct
         fun () -> probeloop sender
 
   let create () : policy =
-    (* guard (Test(EthSrc Probe.mac)) (Mod(Location(Pipe "probe"))) *)
-    (Mod(Location(Pipe "probe")))
+    guard (Test(EthSrc Probe.mac)) (Mod(Location(Pipe "probe"))) 
 
 end
 
@@ -158,29 +156,32 @@ module Host = struct
      | SwitchDown(switch_id)	 -> 
        state:= SwitchMap.remove !state switch_id;
        nib
-     | PacketIn( "host" ,sw_id,pt_id,payload,len) ->( 
- 		 let open Packet in 
- 		 let dlAddr,nwAddr = match parse(SDN_Types.payload_bytes payload) with
+     | PacketIn( "host" ,sw_id,pt_id,payload,len) -> (
+	let open Packet in 
+ 	let dlAddr,nwAddr = match parse(SDN_Types.payload_bytes payload) with
  		 | {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) }
  		 | {nw = Arp (Arp.Reply(dlSrc,nwSrc,_,_)) } ->
  		 	   (dlSrc,nwSrc) 
  		 | _ -> assert false in
-   	    let h = try Some (vertex_of_label nib (Host (dlAddr,nwAddr))) 
-   	  	 with _ -> None in 
-   	    begin match TUtil.in_edge nib sw_id pt_id, h with
-   	  	 | true, None ->
-   	  	   let nib', h = add_vertex nib (Host (dlAddr,nwAddr)) in
-   	  	   let nib', s = add_vertex nib' (Switch sw_id) in  (*is this line necessary?*)
-   	  	   let nib', _ = add_edge nib' s pt_id () h Int32.one in
-   	  	   let nib', _ = add_edge nib' h Int32.one () s pt_id in 
-		   let portmap = SwitchMap.find !state sw_id in 
-		   let portmap = (match portmap with 
-		    | Some (map) -> PortMap.add map pt_id (dlAddr,nwAddr)
-		    | None -> PortMap.empty) in
-                   state := SwitchMap.add !state sw_id portmap;
-		   nib'
-   	  	 | _ , _ -> nib
-   	    end)
+   	let h = try Some (vertex_of_label nib (Host (dlAddr,nwAddr))) 
+   	  	with _ -> None in
+	let s = try Some (vertex_of_label nib (Switch sw_id)) 
+		with _ -> None in 
+   	begin match TUtil.in_edge nib sw_id pt_id, h , s with
+   		| true, None, Some sw ->
+		Log.info "Edges before adding this: %d" (num_edges nib);
+   	  	let nib', h = add_vertex nib (Host (dlAddr,nwAddr)) in
+   	  	let nib', _ = add_edge nib' sw pt_id () h Int32.one in
+   	  	let nib', _ = add_edge nib' h Int32.one () sw pt_id in 
+		let portmap = SwitchMap.find !state sw_id in 
+		let portmap = (match portmap with 
+		 | Some (map) -> PortMap.add map pt_id (dlAddr,nwAddr)
+		 | None -> PortMap.empty) in
+                 state := SwitchMap.add !state sw_id portmap;
+		Log.info "Edges after adding this: %d" (num_edges nib');
+		 nib'
+   	  	| _ , _ , _ -> nib
+   	end)
 
     | PortDown (sw_id,pt_id) -> (
       let v = vertex_of_label nib (Switch sw_id) in

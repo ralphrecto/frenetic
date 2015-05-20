@@ -33,19 +33,32 @@ let topo_to_json (t: Async_NetKAT.Net.Topology.t) =
         `Assoc [("type", `String "host");
                 ("mac", `String (Packet.string_of_mac dladdr));
                 ("ip", `String (Packet.string_of_ip nwaddr))] in
-  let edge_to_json (e: Topo.edge) = 
+
+  let edge_to_json (e: Topo.edge) nodes = 
+    let vlist = Yojson.Basic.Util.to_list (Yojson.Safe.to_basic nodes) in 
     let src, src_port = Topo.edge_src e in
-    let dst, dst_port = Topo.edge_dst e in
+    let dst, dst_port = Topo.edge_dst e in 
+    let src = Topo.vertex_to_label t src in 
+    let dst = Topo.vertex_to_label t dst in  
+
+    let rec find_index el lst acc= 
+	match lst with
+	| [] -> -1
+	| hd::tl -> if (hd = el) then acc
+		    else find_index el tl acc+1 in
+
+    let src_id = find_index (Yojson.Safe.to_basic (vertex_to_json src)) vlist 0 in 
+    let dst_id = find_index (Yojson.Safe.to_basic (vertex_to_json dst)) vlist 0 in 
     (* TODO: ids for vertices *)
-    `Assoc [("src_id", `Int 5);
+    `Assoc [("src_id", `Int src_id);
             ("src_port", `Int (Int32.to_int_exn src_port));
             ("label", `String "");
-            ("dst_id", `Int 5);
+            ("dst_id", `Int dst_id);
             ("dst_port", `Int (Int32.to_int_exn dst_port))] in
   let vertices = `List (Topo.VertexSet.fold (Topo.vertexes t)
       ~f: (fun acc v -> (vertex_to_json (Topo.vertex_to_label t v))::acc)
       ~init: []) in
-  let edges = `List (Topo.fold_edges (fun e acc -> (edge_to_json e)::acc) t []) in
+  let edges = `List (Topo.fold_edges (fun e acc -> (edge_to_json e vertices)::acc) t []) in
   Yojson.Safe.to_string (`Assoc [("nodes", vertices); ("links", edges);])
 
 let routes = [
