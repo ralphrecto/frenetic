@@ -66,8 +66,9 @@ module Switch = struct
       }
 
     let to_pkt_out t : SDN_Types.pktOut =  
+      let bytes = Packet.marshal (to_packet t) in
       let action = SDN_Types.(Output(Physical(t.port_id))) in 
-      (NotBuffered(marshal' t), Some(t.port_id), [action])
+      (NotBuffered(bytes), Some(t.port_id), [action])
 
   end
 
@@ -120,14 +121,14 @@ module Switch = struct
   let rec probeloop (sender : switchId -> SDN_Types.pktOut -> unit Deferred.t) =
     Clock.after probe_period >>=
       fun () ->
-        Deferred.List.iter ~how:`Parallel (!probes)
+        (Deferred.List.iter ~how:`Parallel (!probes)
           ~f:(fun p -> Log.info "sending probe";
-            sender p.switch_id (Probe.to_pkt_out p)) >>=
+            sender p.switch_id (Probe.to_pkt_out p))) >>=
         fun () -> probeloop sender
 
   let create () : policy =
-   let open Optimize in 
-   guard (mk_and (Neg(Test(EthSrc Probe.mac))) (Test(EthType Probe.protocol))) (Mod(Location(Pipe "probe"))) 
+    let open Optimize in 
+    guard (Test(EthSrc Probe.mac)) (Mod(Location(Pipe "probe")))
 
 end
 
