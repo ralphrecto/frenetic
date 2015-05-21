@@ -66,7 +66,8 @@ module Switch = struct
       }
 
     let to_pkt_out t : SDN_Types.pktOut =  
-      (NotBuffered(marshal' t), Some(t.port_id), [Modify(SetEthSrc(mac)); Output(Physical(t.port_id))])
+      let action = SDN_Types.(Output(Physical(t.port_id))) in 
+      (NotBuffered(marshal' t), Some(t.port_id), [action])
 
   end
 
@@ -94,7 +95,7 @@ module Switch = struct
     Log.info "event received";
     match evt with
       | PacketIn ("probe", switch, port, payload, len) ->
-          Log.info "hi";
+          Log.info "probe packet received.";
           let open Packet in
           begin match parse (SDN_Types.payload_bytes payload) with
           | { nw = Unparsable (dlTyp, bytes) } when dlTyp = Probe.protocol ->
@@ -102,7 +103,6 @@ module Switch = struct
               handle_probe nib switch port probe
           | _ -> nib (* error: bad packet *)
           end
-      | PacketIn (_, switch, port, payload, len) -> Log.info "hello"; nib
       | SwitchUp (switch_id, ports) ->
           List.iter ports (fun port_id ->
             probes := ({switch_id; port_id}) :: !probes);
@@ -126,7 +126,8 @@ module Switch = struct
         fun () -> probeloop sender
 
   let create () : policy =
-    guard (Test(EthSrc Probe.mac)) (Mod(Location(Pipe "probe"))) 
+   let open Optimize in 
+   guard (mk_and (Neg(Test(EthSrc Probe.mac))) (Test(EthType Probe.protocol))) (Mod(Location(Pipe "probe"))) 
 
 end
 
