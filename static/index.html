@@ -46,13 +46,36 @@
 
         if (d.type === 'switch') {
             entries = [['switch', d.id]];
-            d3.text('/switch/' + d.id, function(data) {
+            d3.json('/switch/' + d.id, function(data) {
+
+	      d3.select('#entity')
+		.selectAll('.policy')
+		.select('#flowtbl')
+		.remove();
+
+	      var policy = data.policy;
               var pol = d3.select('#entity').selectAll('.policy')
-                  .data([data]);
+                  .data([policy]);
               var pdiv = pol.enter().append('div')
                   .attr('class', 'policy')
                   .append('pre');
-              Rainbow.color(data, 'frenetic', function(colored_data) { pol.select('pre').html(colored_data); });
+              Rainbow.color(policy, 'frenetic', function(colored_data) { pol.select('pre').html(colored_data); });
+
+	      var flow = JSON.parse(data.flowtable); 
+	      console.log(flow);
+	      var flowtable = d3.select('#entity')
+				.selectAll('.policy')
+				.append('table')
+				 .attr('id','flowtbl');
+
+	      var rows = flowtable.selectAll('tr').data(flow);
+	      rows.enter().append('tr');
+	      var cells = rows.selectAll('td')
+			      .data(function(row){
+				console.log([JSON.stringify(row)]);
+				return [JSON.stringify(row)];
+				});
+	      cells.enter().append('td').text(function(d){return d;}); 
             });
         } else if (d.type === 'host') {
             entries = [
@@ -74,7 +97,7 @@
         cells
             .classed('first', function(d, i) { return i === 0; })
             .text(function(d) { return d; });
-        rows.exit().remove();
+        rows.exit().remove(); 
       }
 
       function network() {

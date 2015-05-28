@@ -93,10 +93,8 @@ module Switch = struct
 
   let update (nib: Net.Topology.t) (evt: event) : Net.Topology.t =
     let open Net.Topology in
-    Log.info "event received";
     match evt with
       | PacketIn ("probe", switch, port, payload, len) ->
-          Log.info "probe packet received.";
           let open Packet in
           begin match parse (SDN_Types.payload_bytes payload) with
           | { nw = Unparsable (dlTyp, bytes) } when dlTyp = Probe.protocol ->
@@ -112,6 +110,7 @@ module Switch = struct
       | SwitchDown switch ->
           remove_vertex nib (vertex_of_label nib (Switch switch))
       | PortUp (switch, port) ->
+	  Log.info "Port up event received in switch";
           probes := ({switch_id = switch; port_id = port} :: !probes);
           add_port nib (vertex_of_label nib (Switch switch)) port
       | PortDown (switch, port) ->
@@ -122,7 +121,7 @@ module Switch = struct
     Clock.after probe_period >>=
       fun () ->
         (Deferred.List.iter ~how:`Parallel (!probes)
-          ~f:(fun p -> Log.info "sending probe";
+          ~f:(fun p ->
             sender p.switch_id (Probe.to_pkt_out p))) >>=
         fun () -> probeloop sender
 
@@ -155,11 +154,19 @@ module Host = struct
      | SwitchUp(switch_id,port_id) ->
        state:= SwitchMap.add !state switch_id PortMap.empty;
        nib
-     | SwitchDown(switch_id)	 -> 
-       state:= SwitchMap.remove !state switch_id;
-       nib
+     | SwitchDown(switch_id) ->
+       (let portmap = SwitchMap.find !state switch_id in 
+       match portmap with 
+	| None ->  nib
+	| Some map -> 
+	 PortMap.fold map ~init:nib ~f:(fun ~key:pt_id ~data:host acc -> 	 	 let h = try Some (vertex_of_label nib (Host (fst host, snd host))) 
+		 with _ -> None in 
+	 match h with 
+	 | None -> nib
+	 | Some v -> remove_vertex nib v))	
      | PacketIn( "host" ,sw_id,pt_id,payload,len) -> (
-	let open Packet in 
+	let open Packet in
+	Log.info "pinged!";
  	let dlAddr,nwAddr = match parse(SDN_Types.payload_bytes payload) with
  		 | {nw = Arp (Arp.Query(dlSrc,nwSrc,_)) }
  		 | {nw = Arp (Arp.Reply(dlSrc,nwSrc,_,_)) } ->
@@ -185,16 +192,21 @@ module Host = struct
    	  	| _ , _ , _ -> nib
    	end)
 
-    | PortDown (sw_id,pt_id) -> (
-      let v = vertex_of_label nib (Switch sw_id) in
+    | PortUp (sw_id,pt_id) -> (
+      Log.info "Port up event! - maybe host down.";
       let portmap = SwitchMap.find !state sw_id in
       match portmap with
       | None -> nib
       | Some (map) -> 
 	  begin
- 	    let portmap = PortMap.remove map pt_id in 
-	    state := SwitchMap.add !state sw_id portmap;
-	    remove_endpoint nib (v,pt_id)
+	    let host = PortMap.find map pt_id in 
+	    match host with 
+	    | None -> nib
+	    | Some h ->
+	    	let portmap = PortMap.remove map pt_id in 
+	    	state := SwitchMap.add !state sw_id portmap;
+		let v2 = vertex_of_label nib (Host (fst h, snd h)) in 
+		remove_vertex nib v2
 	  end)
     | _ -> nib
 
@@ -215,9 +227,10 @@ module Discovery = struct
   let rec loop (event_pipe: event Pipe.Reader.t) : unit Deferred.t =
     Pipe.read event_pipe >>= function
       | `Eof -> return ()
-      | `Ok evt -> 
-          t.nib := Host.update (Switch.update !(t.nib) evt) evt; 
-          loop event_pipe
+      | `Ok evt -> begin
+	  t.nib := Switch.update (Host.update !(t.nib) evt) evt; 
+	  loop event_pipe end
+	 
 
   let start (event_pipe: event Pipe.Reader.t)
     (packet_send : switchId -> SDN_Types.pktOut -> unit Deferred.t) =

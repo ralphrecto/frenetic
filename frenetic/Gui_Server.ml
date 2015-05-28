@@ -49,7 +49,6 @@ let topo_to_json (t: Async_NetKAT.Net.Topology.t) =
 
     let src_id = find_index (Yojson.Safe.to_basic (vertex_to_json src)) vlist 0 in 
     let dst_id = find_index (Yojson.Safe.to_basic (vertex_to_json dst)) vlist 0 in 
-    (* TODO: ids for vertices *)
     `Assoc [("src_id", `Int src_id);
             ("src_port", `Int (Int32.to_int_exn src_port));
             ("label", `String "");

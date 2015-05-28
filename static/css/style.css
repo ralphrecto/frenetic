@@ -46,6 +46,21 @@ div#footer {
     margin-right: 10%;
 }
 
+table#flowtbl{
+    text-align: left;
+    width:100%;
+    margin-left: 0%;
+    margin-right:0%;
+    display:block;
+    height:300px;
+    overflow-y:scroll;
+}
+
+#flowtbl td{
+    max-width: 500px;
+    word-wrap:break-word;
+}
+
 #entity .policy {
     margin-top: 20px;
     width: 90%;
@@ -57,6 +72,13 @@ div#footer {
     overflow: auto;
     white-space: pre-wrap;
     max-height: 400px;
+}
+
+#entity .flows {
+    margin-top: 20px;
+    width:90%;
+    height: 400px;
+    margin-left:5%;
 }
 
 td.first {

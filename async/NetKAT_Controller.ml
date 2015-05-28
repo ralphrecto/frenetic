@@ -134,6 +134,7 @@ module type CONTROLLER = sig
   val is_query : string -> bool
   val start : unit -> unit
   val current_switches : unit -> (switchId * portId list) list
+  val get_table: switchId -> (SDN_Types.flow * string list) list
 
 end
 

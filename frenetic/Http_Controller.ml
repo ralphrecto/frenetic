@@ -148,6 +148,14 @@ let start (http_port : int) (openflow_port : int) () : unit =
   Controller.start ();
   let t : t = (module Controller) in
 
+  let node_data_string pol flowtable = begin
+    let open Yojson.Basic.Util in 
+    let polstr = NetKAT_Pretty.string_of_policy pol in 
+    let flow_json = Yojson.Basic.to_string(NetKAT_SDN_Json.flowTable_to_json flowtable) in 
+    Yojson.Basic.to_string (`Assoc[("policy",`String polstr);
+		      ("flowtable",`String flow_json)])
+    end  in
+
   (* initialize discovery *)
   let discoverclient = get_client "discover" in
   let discover =
@@ -161,8 +169,9 @@ let start (http_port : int) (openflow_port : int) () : unit =
     ("/switch/([1-9][0-9]*)", fun g ->
         let sw_id = Int64.of_string (Array.get g 1) in
         printf "Requested policy for switch %Lu" sw_id;
-        let pol = NetKAT_Types.drop in
-        Gui_Server.string_handler (NetKAT_Pretty.string_of_policy pol))
+        let pol = discover.policy in
+	let flow_table = List.fold_left (Controller.get_table sw_id) ~f:(fun acc x -> (fst x) :: acc) ~init:[] in
+        Gui_Server.string_handler (node_data_string pol flow_table))
   ] in
   let _ = Gui_Server.create routes in
   don't_wait_for (propogate_events Controller.event) in
