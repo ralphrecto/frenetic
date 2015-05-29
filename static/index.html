@@ -62,7 +62,6 @@
               Rainbow.color(policy, 'frenetic', function(colored_data) { pol.select('pre').html(colored_data); });
 
 	      var flow = JSON.parse(data.flowtable); 
-	      console.log(flow);
 	      var flowtable = d3.select('#entity')
 				.selectAll('.policy')
 				.append('table')
@@ -72,7 +71,6 @@
 	      rows.enter().append('tr');
 	      var cells = rows.selectAll('td')
 			      .data(function(row){
-				console.log([JSON.stringify(row)]);
 				return [JSON.stringify(row)];
 				});
 	      cells.enter().append('td').text(function(d){return d;}); 
@@ -84,7 +82,7 @@
                 ['Switch Port', d.switch_port]
             ];
             d3.select('#entity').selectAll('.policy').remove()
-        }
+        } 
 
         var rows = d3.select('#entity table').selectAll('tr')
             .data(entries);
@@ -98,6 +96,23 @@
             .classed('first', function(d, i) { return i === 0; })
             .text(function(d) { return d; });
         rows.exit().remove(); 
+      }
+
+      function link_info(l,data){
+	console.log(data);
+	var sw = l.source;
+	if(l.source.type == "host"){
+	    sw = l.target;
+	    if(l.target.type == "host"){
+		console.log(l);
+		return;
+	    }
+	}
+	var sw_id = sw.id;
+	var pt_id = sw.switch_port;
+	d3.text('/switch/' + sw_id + '/port/'+ pt_id, function(data){
+	    console.log(data);
+	})
       }
 
       function network() {
@@ -171,7 +186,8 @@
                 .data(function(d) { return d.links })
               .enter().append('line')
                 .attr('class', 'link')
-                .style('stroke-width', function(d) { return d.redundancy; })
+                .style('stroke-width', function(d) {return 100 * d.redundancy;})
+		.on('click', function(d){link_info(d,data)});
 
             var host = svg.selectAll('.host')
                 .data(function(d) {
@@ -277,12 +293,8 @@
           links = data.links.map(function(e) {
             var src = data.nodes[e.src_id],
                 dst = data.nodes[e.dst_id];
-            if (src.type == "host") {
-                src.switch_port = e.dst_port;
-            }
-            if (dst.type == "host") {
-                dst.switch_port = e.src_port;
-            }
+		src.switch_port = e.src_port;
+		dst.switch_port = e.dst_port;
             return { source : src, target : dst };
           });
 

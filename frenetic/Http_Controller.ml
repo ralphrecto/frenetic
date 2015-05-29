@@ -164,15 +164,27 @@ let start (http_port : int) (openflow_port : int) () : unit =
     Discoveryapp.Discovery.start event_pipe (pkt_out t) in
   update t "discover" discover.policy >>| fun _ ->
   let routes = [
+ (*	 *)
     ("/topology", fun _ ->
-      Gui_Server.string_handler (Gui_Server.topo_to_json !(discover.nib)));
+      return (Gui_Server.string_handler (Gui_Server.topo_to_json !(discover.nib))));
     ("/switch/([1-9][0-9]*)", fun g ->
         let sw_id = Int64.of_string (Array.get g 1) in
         printf "Requested policy for switch %Lu" sw_id;
         let pol = discover.policy in
 	let flow_table = List.fold_left (Controller.get_table sw_id) ~f:(fun acc x -> (fst x) :: acc) ~init:[] in
-        Gui_Server.string_handler (node_data_string pol flow_table))
-  ] in
+        return (Gui_Server.string_handler (node_data_string pol flow_table)));
+    ("/switch/([1-9][0-9]*)/port/([1-9][0-9]*)", fun g ->
+	Log.info "matched the link route."; 
+	let sw_id = Int64.of_string (Array.get g 1) in 
+	let pt_id = Int32.of_string (Array.get g 2) in 
+	let toint x = Int64.to_int_exn x in
+	Controller.port_stats sw_id pt_id >>| fun pstats ->
+	  (let rbytes = toint pstats.rx_bytes in 
+	  let tbytes =  toint pstats.tx_bytes in
+	  let rpackets = toint pstats.rx_packets in 
+	  let tpackets = toint pstats.tx_packets in 
+	  let data = Yojson.Basic.to_string (`Assoc[("bytes", `String (Int.to_string (rbytes+tbytes))); ("packets",`String (Int.to_string (tpackets + rpackets)))]) in
+	Gui_Server.string_handler data)); ] in
   let _ = Gui_Server.create routes in
   don't_wait_for (propogate_events Controller.event) in
   ()

@@ -4,7 +4,7 @@ open Async.Std
 type handler = body:Cohttp_async.Body.t -> Async_extra.Import.Socket.Address.Inet.t -> 
   Cohttp_async.Request.t -> Cohttp_async.Server.response Deferred.t
 
-type routes = (bytes * (bytes array -> handler)) list
+type routes = (bytes * (bytes array -> handler Deferred.t)) list
 
 val static_handler : ?content_type:bytes -> bytes -> handler
 
